@@ -41,6 +41,7 @@ jobs:
         pyinstaller 合格证自动化系统.spec --clean --noconfirm
 
     - name: 获取文件信息
+      shell: cmd
       run: |
         echo "=== 生成的EXE文件信息 ==="
         dir dist
