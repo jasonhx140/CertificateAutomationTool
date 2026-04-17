@@ -211,7 +211,17 @@ def process_all(export_path, cert_path, test_path, log_widget):
         log("==================================================")
         log("✅ 全部处理完成！格式已优化：自动列宽 + 表头筛选")
         if messagebox.askyesno("完成", f"已保存至：{output_dir}\n是否打开文件夹？"):
-            os.startfile(output_dir)
+            try:
+                import subprocess
+                import platform
+                if platform.system() == 'Windows':
+                    os.startfile(output_dir)
+                elif platform.system() == 'Darwin':  # macOS
+                    subprocess.run(['open', output_dir])
+                else:  # Linux
+                    subprocess.run(['xdg-open', output_dir])
+            except Exception as e:
+                log(f"打开文件夹失败: {str(e)}")
 
     except Exception as e:
         log(f"❌ 错误：{str(e)}")
