@@ -1,0 +1,28 @@
+# PyInstaller
+build/
+dist/
+*.spec.cache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# 本地配置
+tool_config.json
+*.xlsx
+20*-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
