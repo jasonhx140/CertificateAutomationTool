@@ -35,7 +35,7 @@ jobs:
         if exist build rmdir /s /q build
         if exist dist rmdir /s /q dist
 
-    - name: 执行PyInstaller打包
+    - name: 执行PyInstaller打包(onedir模式)
       shell: cmd
       run: |
         pyinstaller 合格证自动化系统.spec --clean --noconfirm
@@ -43,22 +43,31 @@ jobs:
     - name: 获取文件信息
       shell: cmd
       run: |
-        echo "=== 生成的EXE文件信息 ==="
+        echo "=== 生成的文件信息 ==="
         dir dist
-        for %%i in (dist\*.exe) do echo 文件大小: %%~zi 字节
+        dir dist\合格证自动化系统
 
-    - name: 上传构建产物
+    - name: 打包为zip
+      shell: cmd
+      run: |
+        cd dist
+        powershell Compress-Archive -Path "合格证自动化系统" -DestinationPath "合格证自动化系统.zip" -Force
+        cd ..
+        echo "=== Zip文件信息 ==="
+        dir dist\*.zip
+
+    - name: 上传构建产物(zip包)
       uses: actions/upload-artifact@v4
       with:
         name: 合格证自动化系统-windows
-        path: dist/合格证自动化系统.exe
+        path: dist/合格证自动化系统.zip
         retention-days: 30
 
     - name: 创建Release（仅tag时）
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/合格证自动化系统.exe
+        files: dist/合格证自动化系统.zip
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

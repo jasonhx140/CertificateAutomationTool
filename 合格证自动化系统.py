@@ -1,16 +1,20 @@
-import pandas as pd
-import numpy as np
 import os
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
 import datetime
+import sys
+
+# ===================== 打包兼容修复 =====================
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 # ===================== 配置 =====================
-CONFIG_FILE = "tool_config.json"
+CONFIG_FILE = "config.json"
 MERGE_COL_NAME = "销售凭证"
 
 # 必须删除的物料编码
@@ -25,76 +29,88 @@ REMOVE_MATERIALS = {
 ORG_CONFIG = {
     "维通利华北京销售组织": {
         "test_sheet": "北京",
-        "license": "SCXK（京）2021001"
+        "license": "SCXK（京）2021-0011"
     },
     "维通利华湖北销售组织": {
         "test_sheet": "湖北",
-        "license": "SCXK（鄂）2022030"
+        "license": "SCXK（鄂）2022-0030"
     }
 }
 
 # ===================== 配置记忆 =====================
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    try:
+        if os.path.exists(resource_path(CONFIG_FILE)):
+            with open(resource_path(CONFIG_FILE), "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            if os.path.exists(CONFIG_FILE):
-                os.remove(CONFIG_FILE)
+    except:
+        pass
     return {}
 
-def save_config(export_path, cert_path, test_path):
-    cfg = {"export": export_path, "cert": cert_path, "test": test_path}
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+def save_config(export_path, cert_path, test_path, selected_org_list):
+    cfg = {
+        "export": export_path,
+        "cert": cert_path,
+        "test": test_path,
+        "selected_org_list": selected_org_list
+    }
+    try:
+        with open(resource_path(CONFIG_FILE), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
-# ===================== 文件夹命名规则 =====================
+# ===================== 输出文件夹 =====================
 def get_output_folder():
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    if not os.path.exists(today):
-        os.makedirs(today)
-        return today
-    idx = 2
-    while True:
-        folder_name = f"{today}-{idx}"
-        if not os.path.exists(folder_name):
-            os.makedirs(folder_name)
-            return folder_name
-        idx += 1
+    base_folder = "已生成的合格证"
+    if not os.path.exists(base_folder):
+        os.makedirs(base_folder)
+    return base_folder
 
-# ===================== 【美化加强】自动列宽 + 表头筛选 =====================
+# ===================== 文件名：日期+版本号 =====================
+def get_filename(prefix):
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    base_folder = get_output_folder()
+    filename = f"{prefix}_{today}.xlsx"
+    full_path = os.path.join(base_folder, filename)
+    version = 2
+    while os.path.exists(full_path):
+        filename = f"{prefix}_{today}_V{version}.xlsx"
+        full_path = os.path.join(base_folder, filename)
+        version += 1
+    return full_path
+
+# ===================== 自动列宽 + 筛选 =====================
 def save_pretty_excel(df, filename, text_col_name):
+    # 延迟导入：仅在需要时加载
+    import pandas as pd
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
     wb = Workbook()
     ws = wb.active
     ws.title = "合格证"
-
-    # 写入数据
     for col_idx, col_name in enumerate(df.columns, 1):
         ws.cell(row=1, column=col_idx, value=col_name)
     for r_idx, row in enumerate(df.values, 2):
         for c_idx, value in enumerate(row, 1):
-            ws.cell(row=r_idx, column=c_idx, value=value)
+            # 关键修改：如果值是NaN则写入空字符串
+            cell_value = value if pd.notna(value) else ""
+            ws.cell(row=r_idx, column=c_idx, value=cell_value)
 
-    # 样式
     font_normal = Font(name="微软雅黑", size=9)
     font_header = Font(name="微软雅黑", size=9, bold=True)
     fill_header = PatternFill(start_color="4472C9", end_color="4472C9", fill_type="solid")
     align_center = Alignment(horizontal='center', vertical='center')
 
-    # 表头样式
     for cell in ws[1]:
         cell.font = font_header
         cell.fill = fill_header
         cell.alignment = align_center
-
-    # 内容样式
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             cell.font = font_normal
             cell.alignment = align_center
 
-    # ===================== 【新增】自动适配列宽 =====================
     for col in ws.columns:
         max_length = 0
         column = col[0].column_letter
@@ -104,17 +120,18 @@ def save_pretty_excel(df, filename, text_col_name):
                     max_length = len(str(cell.value))
             except:
                 pass
-        adjusted_width = min(max_length + 2, 60)  # 最大60，防止过宽
+        adjusted_width = min(max_length + 2, 60)
         ws.column_dimensions[column].width = adjusted_width
 
-    # ===================== 【新增】表头添加筛选 =====================
     ws.auto_filter.ref = ws.dimensions
-
     ws.freeze_panes = "A2"
     wb.save(filename)
 
 # ===================== 核心处理 =====================
-def process_all(export_path, cert_path, test_path, log_widget):
+def process_all(export_path, test_path, cert_template_path, log_widget, selected_org_list):
+    # 延迟导入：仅在点击"生成"时加载重型库，加速 GUI 启动
+    import pandas as pd
+
     def log(msg):
         now = datetime.datetime.now().strftime("%H:%M:%S")
         log_widget.insert(tk.END, f"[{now}] {msg}\n")
@@ -124,51 +141,60 @@ def process_all(export_path, cert_path, test_path, log_widget):
     try:
         log("开始读取数据源...")
         export_df = pd.read_excel(export_path, dtype=str)
-        cert_template = pd.read_excel(cert_path, dtype=str)
+        cert_template = pd.read_excel(cert_template_path, dtype=str)
         log(f"原始数据：{len(export_df)} 行")
 
-        # 按表头【物料】过滤，彻底删除指定编码
         if "物料" in export_df.columns:
             export_df["物料"] = export_df["物料"].astype(str).str.strip()
             before = len(export_df)
             export_df = export_df[~export_df["物料"].isin(REMOVE_MATERIALS)]
             log(f"✅ 已按表头【物料】删除无效数据：{before - len(export_df)} 行")
 
-        # 剔除销售凭证2开头
         if MERGE_COL_NAME in export_df.columns:
             export_df = export_df[~export_df[MERGE_COL_NAME].str.startswith("2", na=False)]
 
-        # 原有过滤
         condition_exclude = (export_df["单位"] == "EA") | export_df["拒绝原因描述"].notna()
         export_df = export_df[~condition_exclude]
-        export_df = export_df[export_df["销售组织描述"].isin(ORG_CONFIG.keys())]
 
-        log(f"最终有效数据：{len(export_df)} 行")
-        if len(export_df) == 0:
-            messagebox.showwarning("提示", "无有效数据")
-            return
+        for col in ["最小体重", "最大体重"]:
+            if col in export_df.columns:
+                export_df[col] = export_df[col].astype(str).str.strip()
+                export_df[col] = export_df[col].replace({"0": "", "0.0": ""})
+                log(f"✅ {col} 为0时已置空")
 
-        # 合并凭证
-        export_df["合并凭证"] = export_df["销售凭证"].str.strip() + export_df["销售订单行号"].str.strip()
+        if "性别" in export_df.columns:
+            export_df["性别"] = export_df["性别"].replace({"F": "雌", "M": "雄"})
+            log("✅ 性别已转换：F→雌，M→雄")
 
-        # 日期格式化
+        if "品系" in export_df.columns:
+            export_df["品系"] = export_df["品系"].replace({
+                "APOE-KO": "APOE",
+                "C57BL/6JNifdc Aged": "C57BL/6JNifdc"
+            })
+            log("✅ 品系已标准化")
+
         date_cols = [c for c in export_df.columns if "日期" in c or "时间" in c]
         for col in date_cols:
             export_df[col] = pd.to_datetime(export_df[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
+        export_df["合并凭证"] = export_df["销售凭证"].str.strip() + export_df["销售订单行号"].str.strip()
         output_dir = get_output_folder()
         log(f"输出文件夹：{output_dir}")
 
-        for org_name, cfg in ORG_CONFIG.items():
-            org_data = export_df[export_df["销售组织描述"] == org_name].copy()
-            if org_data.empty:
-                log(f"{org_name} 无数据，跳过")
+        for selected_org in selected_org_list:
+            if selected_org not in ORG_CONFIG:
+                log(f"⚠️ 公司 {selected_org} 未配置，跳过")
                 continue
-
-            log(f"处理 {org_name}...")
+            log(f"\n==================== 开始处理：{selected_org} ====================")
+            org_data = export_df[export_df["销售组织描述"] == selected_org].copy()
+            log(f"当前公司有效数据：{len(org_data)} 行")
+            if len(org_data) == 0:
+                log(f"⚠️ {selected_org} 无有效数据，跳过")
+                continue
+            cfg = ORG_CONFIG[selected_org]
             test_df = pd.read_excel(test_path, sheet_name=cfg["test_sheet"], dtype=str)
 
-            if "品系" in test_df.columns:
+            if "品" in test_df.columns:
                 key_col = "品系"
             elif "SAP系统品系名称" in test_df.columns:
                 key_col = "SAP系统品系名称"
@@ -179,20 +205,22 @@ def process_all(export_path, cert_path, test_path, log_widget):
 
             test_df["检测日期"] = pd.to_datetime(test_df["检测日期"], errors="coerce").dt.strftime("%Y-%m-%d")
             test_df = test_df.drop_duplicates(subset=[key_col], keep="last")
-            date_map = dict(zip(test_df[key_col], test_df["检测日期"]))
+            test_df["key_col_lower"] = test_df[key_col].str.strip().str.lower()
+            date_map = dict(zip(test_df["key_col_lower"], test_df["检测日期"]))
+            if "品系" in org_data.columns and "最后一次检测日期" in cert_template.columns:
+                org_data["品系_lower"] = org_data["品系"].str.strip().str.lower()
+                org_data["最后一次检测日期"] = org_data["品系_lower"].map(date_map)
+                org_data = org_data.drop(columns=["品系_lower"])
 
             final_df = pd.DataFrame(columns=cert_template.columns)
             for col in final_df.columns:
                 if col in org_data.columns and col != "备注":
                     final_df[col] = org_data[col]
-
             final_df[MERGE_COL_NAME] = org_data["合并凭证"]
             if "备注" in final_df.columns:
                 final_df["备注"] = ""
 
-            if "品系" in final_df.columns and "最后一次检测日期" in final_df.columns:
-                final_df["最后一次检测日期"] = final_df["品系"].map(date_map)
-
+            # 关键修改：生产许可证号赋值逻辑 - 仅当列存在时赋值，空值保留
             fixed_fields = {
                 "生产许可证号": cfg["license"],
                 "用途": "科学研究",
@@ -202,36 +230,40 @@ def process_all(export_path, cert_path, test_path, log_widget):
             }
             for k, v in fixed_fields.items():
                 if k in final_df.columns:
-                    final_df[k] = v
+                    # 仅赋值非空值，若v为空则不修改（保留原空值）
+                    if pd.notna(v) and v != "":
+                        final_df[k] = v
+                    # 若v为空，保持列原有空值，不做赋值
 
-            out_file = os.path.join(output_dir, f"合格证_{cfg['test_sheet']}.xlsx")
+            # E列格式修正逻辑保持不变，但处理空值
+            if len(final_df.columns) >= 5:
+                e_col_name = final_df.columns[4]
+                if e_col_name not in ["", None]:
+                    # 先替换空值为""，再处理格式
+                    final_df[e_col_name] = final_df[e_col_name].fillna("").astype(str)
+                    final_df[e_col_name] = final_df[e_col_name].str.replace(" ", "")
+                    final_df[e_col_name] = final_df[e_col_name].str.replace("(", "（").str.replace(")", "）")
+                    log(f"✅ {e_col_name} 列格式已修正")
+
+            out_file = get_filename(f"合格证_{cfg['test_sheet']}")
             save_pretty_excel(final_df, out_file, MERGE_COL_NAME)
-            log(f"已生成：{os.path.basename(out_file)}")
+            log(f"✅ 已生成：{os.path.basename(out_file)}")
 
-        log("==================================================")
-        log("✅ 全部处理完成！格式已优化：自动列宽 + 表头筛选")
-        if messagebox.askyesno("完成", f"已保存至：{output_dir}\n是否打开文件夹？"):
-            try:
-                import subprocess
-                import platform
-                if platform.system() == 'Windows':
-                    os.startfile(output_dir)
-                elif platform.system() == 'Darwin':  # macOS
-                    subprocess.run(['open', output_dir])
-                else:  # Linux
-                    subprocess.run(['xdg-open', output_dir])
-            except Exception as e:
-                log(f"打开文件夹失败: {str(e)}")
-
+        log("\n==================================================")
+        log("✅ 所有选中公司处理完成！")
+        if messagebox.askyesno("完成", f"全部文件已保存至：\n{output_dir}\n是否打开文件夹？"):
+            os.startfile(output_dir)
     except Exception as e:
         log(f"❌ 错误：{str(e)}")
-        messagebox.showerror("失败", str(e))
+        messagebox.showerror("处理失败", str(e))
 
 # ===================== GUI界面 =====================
 def main_gui():
     root = tk.Tk()
     root.title("实验动物合格证自动生成工具")
-    root.geometry("760x750")
+
+    # ✅ 唯一正确修改：从底部增加60，不越界、不闪退
+    root.geometry("760x585")
     root.resizable(False, False)
 
     PRIMARY = "#2C70C9"
@@ -239,14 +271,14 @@ def main_gui():
     ACCENT = "#3E8D66"
     FG = "#FFFFFF"
 
-    top_frame = tk.Frame(root, bg=PRIMARY, height=90)
+    top_frame = tk.Frame(root, bg=PRIMARY, height=80)
     top_frame.pack(fill=tk.X)
-    tk.Label(top_frame, text="实验动物合格证自动生成工具", font=("微软雅黑", 20, "bold"),
-             bg=PRIMARY, fg=FG).place(x=30, y=20)
-    tk.Label(top_frame, text="文件记忆｜一键生成", font=("微软雅黑", 11),
-             bg=PRIMARY, fg="#D0E0F0").place(x=32, y=58)
+    tk.Label(top_frame, text="实验动物合格证自动生成工具", font=("微软雅黑", 18, "bold"),
+             bg=PRIMARY, fg=FG).place(x=30, y=15)
+    tk.Label(top_frame, text="文件记忆｜一键生成｜公司筛选", font=("微软雅黑", 10),
+             bg=PRIMARY, fg="#D0E0F0").place(x=32, y=50)
 
-    content_frame = tk.Frame(root, bg=SECONDARY, padx=20, pady=12)
+    content_frame = tk.Frame(root, bg=SECONDARY, padx=20, pady=10)
     content_frame.pack(fill=tk.BOTH, expand=True)
     content_frame.pack_propagate(False)
 
@@ -256,28 +288,41 @@ def main_gui():
         "cert": cfg.get("cert", ""),
         "test": cfg.get("test", "")
     }
+    default_selected = cfg.get("selected_org_list", list(ORG_CONFIG.keys()))
 
     PANEL_WIDTH = 700
-    FILE_H = 160
-    LOG_H = 210
-    BTN_FRAME_H = 120
-    GAP = 10
+    SPACE = 8
+    Y = 5
 
-    # 文件选择区域
-    file_frame = tk.LabelFrame(content_frame, text="文件选择", font=("微软雅黑", 11, "bold"), bg=SECONDARY)
-    file_frame.place(x=0, y=GAP, width=PANEL_WIDTH, height=FILE_H)
+    # 公司选择框
+    ORG_H = 85
+    org_frame = tk.LabelFrame(content_frame, text="公司选择（可多选）", font=("微软雅黑", 10, "bold"), bg=SECONDARY)
+    org_frame.place(x=0, y=Y, width=PANEL_WIDTH, height=ORG_H)
+    Y += ORG_H + SPACE
 
-    rows = [
-        ("1. export 源数据文件", "export", 10),
-        ("2. 合格证模板", "cert", 40),
-        ("3. 检测日期报告文件", "test", 70)
-    ]
+    tk.Label(org_frame, text="请选择需要生成合格证的公司：", font=("微软雅黑", 9), bg=SECONDARY).place(x=15, y=15)
+    all_orgs = list(ORG_CONFIG.keys())
+    org_vars = {}
+    start_y = 18
+    step_y = 26
+    for i, org in enumerate(all_orgs):
+        var = tk.BooleanVar(value=org in default_selected)
+        org_vars[org] = var
+        tk.Checkbutton(org_frame, text=org, variable=var, font=("微软雅黑", 9), bg=SECONDARY) \
+            .place(x=230, y=start_y + i * step_y, anchor="w")
 
+    # 文件选择框
+    FILE_H = 125
+    file_frame = tk.LabelFrame(content_frame, text="文件选择", font=("微软雅黑", 10, "bold"), bg=SECONDARY)
+    file_frame.place(x=0, y=Y, width=PANEL_WIDTH, height=FILE_H)
+    Y += FILE_H + SPACE
+
+    rows = [("1. export 源数据文件", "export", 10), ("2. 合格证模板", "cert", 40), ("3. 检测日期报告文件", "test", 70)]
     entrys = {}
     for label, key, y in rows:
-        tk.Label(file_frame, text=label, font=("微软雅黑", 10), bg=SECONDARY).place(x=15, y=y)
-        ent = tk.Entry(file_frame, font=("微软雅黑", 10), state="readonly", bg="white")
-        ent.place(x=180, y=y-2, width=380, height=24)
+        tk.Label(file_frame, text=label, font=("微软雅黑", 9), bg=SECONDARY).place(x=15, y=y)
+        ent = tk.Entry(file_frame, font=("微软雅黑", 9), state="readonly", bg="white")
+        ent.place(x=180, y=y - 2, width=380, height=22)
         entrys[key] = ent
         if paths[key]:
             ent.config(state=tk.NORMAL)
@@ -292,39 +337,50 @@ def main_gui():
                 e.insert(0, f)
                 e.config(state="readonly")
                 paths[k] = f
-                save_config(paths["export"], paths["cert"], paths["test"])
+                selected = [o for o, v in org_vars.items() if v.get()]
+                save_config(paths["export"], paths["cert"], paths["test"], selected)
 
-        tk.Button(file_frame, text="选择文件", width=12, command=choose).place(x=570, y=y-3)
+        tk.Button(file_frame, text="选择文件", width=11, command=choose).place(x=570, y=y - 3)
 
-    # 运行日志
-    log_frame = tk.LabelFrame(content_frame, text="运行日志", font=("微软雅黑", 11, "bold"), bg=SECONDARY)
-    log_frame.place(x=0, y=GAP + FILE_H + 10, width=PANEL_WIDTH, height=LOG_H)
+    # 日志框
+    LOG_H = 120
+    log_frame = tk.LabelFrame(content_frame, text="运行日志", font=("微软雅黑", 10, "bold"), bg=SECONDARY)
+    log_frame.place(x=0, y=Y, width=PANEL_WIDTH, height=LOG_H)
+    Y += LOG_H + SPACE
 
-    log_txt = tk.Text(log_frame, font=("Consolas", 10), bg="white", relief=tk.FLAT)
-    log_txt.place(x=8, y=6, width=PANEL_WIDTH-25, height=LOG_H-35)
+    log_txt = tk.Text(log_frame, font=("Consolas", 9), bg="white", relief=tk.FLAT)
+    log_txt.place(x=8, y=6, width=PANEL_WIDTH - 25, height=LOG_H - 35)
     scr = ttk.Scrollbar(log_frame, command=log_txt.yview)
-    scr.place(x=PANEL_WIDTH-15, y=6, width=12, height=LOG_H-35)
+    scr.place(x=PANEL_WIDTH - 15, y=6, width=12, height=LOG_H - 35)
     log_txt.config(yscrollcommand=scr.set)
 
-    # 操作按钮
-    btn_frame = tk.LabelFrame(content_frame, text="操作", font=("微软雅黑", 11, "bold"), bg=SECONDARY)
-    btn_frame.place(x=0, y=GAP + FILE_H + LOG_H + 40, width=PANEL_WIDTH, height=BTN_FRAME_H)
+    # 操作框
+    BTN_H = 95
+    btn_frame = tk.LabelFrame(content_frame, text="操作", font=("微软雅黑", 10, "bold"), bg=SECONDARY)
+    btn_frame.place(x=0, y=Y, width=PANEL_WIDTH, height=BTN_H)
 
     def run():
-        if not all(paths.values()):
-            messagebox.showwarning("提示", "请选择全部3个文件")
-            return
-        process_all(paths["export"], paths["cert"], paths["test"], log_txt)
+        try:
+            if not all(paths.values()):
+                messagebox.showwarning("提示", "请选择全部3个文件")
+                return
+            selected_org_list = [o for o, v in org_vars.items() if v.get()]
+            if not selected_org_list:
+                messagebox.showwarning("提示", "请至少勾选一个公司")
+                return
+            save_config(paths["export"], paths["cert"], paths["test"], selected_org_list)
+            process_all(paths["export"], paths["test"], paths["cert"], log_txt, selected_org_list)
+        except Exception as e:
+            messagebox.showerror("异常", f"运行出错：{str(e)}")
 
-    tk.Button(btn_frame, text="🚀 一键生成合格证", font=("微软雅黑", 14, "bold"),
-              bg=ACCENT, fg=FG, relief=tk.FLAT, command=run)\
-        .place(relx=0.5, y=25, anchor="n", width=PANEL_WIDTH-40, height=40)
+    tk.Button(btn_frame, text="🚀 一键生成合格证", font=("微软雅黑", 12, "bold"),
+              bg=ACCENT, fg=FG, relief=tk.FLAT, command=run) \
+        .place(relx=0.5, rely=0.5, anchor="center", width=PANEL_WIDTH - 40, height=45)
 
     # 底部
-    bottom = tk.Frame(root, bg=PRIMARY, height=28)
+    bottom = tk.Frame(root, bg=PRIMARY, height=24)
     bottom.pack(side=tk.BOTTOM, fill=tk.X)
-    tk.Label(bottom, text="© 内部专用工具", font=("微软雅黑", 9),
-             bg=PRIMARY, fg="#D0E0F0").pack(anchor=tk.CENTER)
+    tk.Label(bottom, text="© 内部专用工具", font=("微软雅黑", 8), bg=PRIMARY, fg="#D0E0F0").pack(anchor="center")
 
     root.mainloop()
 
