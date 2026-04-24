@@ -6,53 +6,34 @@
 
 block_cipher = None
 
-# 排除不需要的模块以减小体积、加速启动
+# 排除不需要的模块以减小体积、加速启动（保守策略，避免排除标准库依赖）
 EXCLUDES = [
-    # 标准库不需要的部分
+    # 测试/文档相关（安全排除）
     'tkinter.test',
     'unittest',
     'pydoc',
     'doctest',
+    'pytest',
+    'sphinx',
+    # 打包工具（安全排除）
     'distutils',
     'setuptools',
     'pip',
-    'email',
-    'html',
-    'xmlrpc',
-    'multiprocessing',
-    'concurrent',
-    'asyncio',
-    'urllib',
-    'http',
-    'ftplib',
-    'poplib',
-    'imaplib',
-    'nntplib',
-    'smtplib',
-    'telnetlib',
-    'socketserver',
-    # numpy/pandas 不需要的子模块
-    'numpy.distutils',
-    'numpy.f2py',
-    'numpy.testing',
-    'pandas.plotting',
+    # 明确不需要的第三方库
+    'matplotlib',
+    'PIL',
+    'scipy',
+    'sklearn',
+    'IPython',
+    'jupyter',
+    'notebook',
+    # pandas 不需要的 IO 格式
     'pandas.io.parquet',
     'pandas.io.feather',
     'pandas.io.stata',
     'pandas.io.sas',
     'pandas.io.spss',
-    'pandas.io.json',
     'pandas.io.gbq',
-    # matplotlib 等不需要的库
-    'matplotlib',
-    'PIL',
-    'scipy',
-    'sklearn',
-    'pytest',
-    'IPython',
-    'jupyter',
-    'notebook',
-    'sphinx',
 ]
 
 a = Analysis(
