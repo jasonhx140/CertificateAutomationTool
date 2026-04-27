@@ -27,13 +27,8 @@ EXCLUDES = [
     'IPython',
     'jupyter',
     'notebook',
-    # pandas 不需要的 IO 格式
-    'pandas.io.parquet',
-    'pandas.io.feather',
-    'pandas.io.stata',
-    'pandas.io.sas',
-    'pandas.io.spss',
-    'pandas.io.gbq',
+    # 注意：不要排除 pandas.io.* 模块！
+    # pandas 内部会动态导入这些模块，排除会导致运行时 ModuleNotFoundError
 ]
 
 a = Analysis(
